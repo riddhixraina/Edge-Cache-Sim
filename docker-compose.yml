@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  # Main CDN Simulator Dashboard
+  simulator:
+    build:
+      context: .
+      target: production
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./results:/app/results
+      - ./data:/app/data
+    environment:
+      - PYTHONPATH=/app/src
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Development Environment
+  dev:
+    build:
+      context: .
+      target: development
+    ports:
+      - "8888:8888"
+    volumes:
+      - .:/app
+      - ./results:/app/results
+    environment:
+      - PYTHONPATH=/app/src
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
+    profiles:
+      - dev
+
+  # Mock Origin Server
+  origin-server:
+    build:
+      context: .
+      target: base
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/objects:/app/data/objects
+    command: python -c "
+      from flask import Flask, send_file, jsonify
+      import os
+      import random
+      import time
+      
+      app = Flask(__name__)
+      
+      @app.route('/objects/<object_id>')
+      def serve_object(object_id):
+          time.sleep(random.uniform(0.05, 0.2))
+          filepath = f'/app/data/objects/{object_id}.bin'
+          if not os.path.exists(filepath):
+              size = random.randint(1024, 10*1024*1024)
+              os.makedirs(os.path.dirname(filepath), exist_ok=True)
+              with open(filepath, 'wb') as f:
+                  f.write(os.urandom(size))
+          return send_file(filepath)
+      
+      @app.route('/health')
+      def health():
+          return jsonify({'status': 'healthy'})
+      
+      app.run(host='0.0.0.0', port=8080)
+    "
+    profiles:
+      - http
+
+  # Testing Service
+  test:
+    build:
+      context: .
+      target: testing
+    volumes:
+      - .:/app
+    command: python test_runner.py
+    profiles:
+      - test
+
+  # Benchmark Service
+  benchmark:
+    build:
+      context: .
+      target: base
+    volumes:
+      - ./results:/app/results
+    environment:
+      - PYTHONPATH=/app/src
+    command: python cli.py benchmark --requests 1000,10000,100000 --nodes 2,4,8,16 --policies LRU,LFU,TTL --output results/csv/benchmark_results.csv
+    profiles:
+      - benchmark
+
+volumes:
+  results:
+  data:
+
+networks:
+  default:
+    name: cdn-simulator-network
