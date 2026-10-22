@@ -125,6 +125,12 @@ def add_sweep_arguments(parser):
                        help='Comma-separated values to test')
     parser.add_argument('--policy', choices=['LRU', 'LFU', 'TTL'], default='LRU',
                        help='Cache policy (if not sweeping policy)')
+    parser.add_argument('--nodes', type=int, default=8,
+                       help='Number of edge nodes (if not sweeping nodes)')
+    parser.add_argument('--cache-size', type=int, default=100,
+                       help='Cache capacity per node (if not sweeping cache_size)')
+    parser.add_argument('--skew', type=float, default=0.9,
+                       help='Zipf skew (if not sweeping skew)')
     parser.add_argument('--requests', type=int, default=10000,
                        help='Number of requests per simulation')
     parser.add_argument('--catalog-size', type=int, default=1000,
@@ -259,7 +265,7 @@ def run_sweep(args):
         # Create configuration
         config_dict = {
             'num_nodes': args.nodes,
-            'cache_capacity': 100,  # Default
+            'cache_capacity': args.cache_size,
             'policy': args.policy,
             'ttl_seconds': 300.0,
             'origin_latency_ms': 100.0,
@@ -276,12 +282,12 @@ def run_sweep(args):
         
         config = SimulationConfig(**config_dict)
         
-        # Generate trace
+        # Generate trace (a skew sweep changes the workload, not the config)
         generator = TraceGenerator(seed=42)
         trace = generator.generate_zipf_trace(
             num_requests=args.requests,
             catalog_size=args.catalog_size,
-            skew=0.9
+            skew=value if args.param == 'skew' else args.skew
         )
         
         # Run simulation
@@ -299,8 +305,8 @@ def run_sweep(args):
         writer = csv.writer(f)
         writer.writerow([args.param, 'hit_ratio', 'bandwidth_saved_pct', 'avg_latency_ms', 'load_balance_ratio'])
         
-        for result in results:
-            param_value = getattr(result.config, args.param)
+        # The swept value, not a config attribute: skew lives in the trace
+        for param_value, result in zip(values, results):
             writer.writerow([
                 param_value,
                 result.aggregate_metrics['avg_hit_ratio'],

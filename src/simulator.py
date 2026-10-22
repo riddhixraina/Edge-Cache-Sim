@@ -83,7 +83,7 @@ class SimulationResult:
             f"Simulation Summary:\n"
             f"  Nodes: {self.config.num_nodes}\n"
             f"  Policy: {self.config.policy}\n"
-            f"  Requests: {len(self.results):,}\n"
+            f"  Requests: {metrics.get('total_requests', len(self.results)):,}\n"
             f"  Hit Ratio: {metrics['avg_hit_ratio']:.2%}\n"
             f"  Bandwidth Saved: {metrics['bandwidth_saved_pct']:.1f}%\n"
             f"  Avg Latency: {metrics['avg_latency_ms']:.1f}ms\n"

@@ -1,420 +1,170 @@
-# 🚀 Edge Cache Simulator
+# Edge Cache Simulator
 
-A **production-grade CDN edge cache simulator** for evaluating caching policies, analyzing performance, and conducting distributed systems research. This project demonstrates enterprise-level systems engineering, distributed caching algorithms, and scientific experiment methodology.
+A CDN edge cache simulator for answering one question: which caching and routing choices keep the most traffic off the origin server? It replays a request trace through a set of edge nodes, routes each request with consistent hashing, and measures how often each node can answer from its own cache.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code Coverage](https://img.shields.io/badge/coverage-90%25-green.svg)](https://github.com/yourusername/edge-cache-sim)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://hub.docker.com/r/yourusername/edge-cache-sim)
+[![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen.svg)](#testing)
+[![Core coverage](https://img.shields.io/badge/core%20coverage-80%25-green.svg)](#testing)
 
-## ✨ Features
+## What it does
 
-### 🏗️ Core Simulation Engine
-- **Multi-Node Architecture**: Simulate 2-64 edge nodes across geographical regions
-- **Caching Policies**: LRU, LFU, and TTL algorithms with clean OOP design
-- **Consistent Hashing**: Request routing with virtual nodes for load balancing
-- **Realistic Workloads**: Zipf-distributed popularity and bursty Poisson arrivals
+- **Edge nodes with pluggable caches**: LRU, LFU and TTL policies behind one `CachePolicy` interface
+- **Consistent hashing** with virtual nodes to spread objects across nodes and limit reshuffling when a node fails
+- **Synthetic workloads**: Zipf-distributed popularity, plus bursty Poisson arrivals
+- **Metrics**: hit ratio, bytes served from the edge, per-node load, cache occupancy
+- **Interfaces**: a CLI, a Streamlit dashboard and Jupyter notebooks
 
-### 📊 Advanced Analytics
-- **Comprehensive Metrics**: Hit ratios, bandwidth savings, latency improvements
-- **Statistical Analysis**: Gini coefficients, popularity distributions, temporal patterns
-- **Performance Profiling**: Per-node metrics, load balancing, cache utilization
-- **Export Capabilities**: CSV, JSON, Parquet formats for further analysis
+## Results
 
-### 🎨 Visualization & Interfaces
-- **Interactive Dashboard**: Real-time Streamlit visualization with live updates
-- **Publication-Ready Plots**: Matplotlib/Plotly charts for research papers
-- **Command-Line Interface**: Comprehensive CLI for automation and scripting
-- **Jupyter Notebooks**: Experimental analysis and documentation
+Measured with `python benchmarks/run_benchmarks.py`. Setup: 100,000 requests with Zipf skew 0.9 over 10,000 objects, 8 edge nodes holding 100 objects each, so the edge can hold 8% of the catalog. Averaged over seeds 1 to 3.
 
-### 🔧 Production Features
-- **Docker Deployment**: Multi-stage builds with development and production images
-- **Comprehensive Testing**: >90% code coverage with pytest
-- **Type Safety**: Full type hints with mypy validation
-- **Code Quality**: Black formatting, pylint analysis
-- **HTTP Integration**: Mock origin server with realistic network simulation
+### Caching policy
 
-## 🚀 Quick Start
+| Policy | Edge hit ratio | Bytes served from edge |
+|---|---|---|
+| LRU | 52.1% | 52.7% |
+| LFU | **59.5%** | **60.0%** |
+| TTL (300 s) | 47.5% | 48.1% |
 
-### Option 1: Docker (Recommended)
+LFU wins by 7 points because this workload's popularity never changes, so counting past requests predicts future ones. Real traffic shifts, and pure LFU then keeps stale content, which is why production caches use hybrids such as TinyLFU. TTL behaves like FIFO here: it ignores how often an item is read, so it loses to LRU.
+
+### Cache size (LRU)
+
+| Objects per node | 25 | 50 | 100 | 200 | 400 |
+|---|---|---|---|---|---|
+| Edge hit ratio | 33.9% | 42.6% | 52.2% | 62.8% | 74.6% |
+
+Each doubling of cache size adds roughly 10 points of hit ratio.
+
+### TTL: freshness against hit ratio
+
+| TTL (seconds) | 1 | 5 | 10 | 20 | 60 |
+|---|---|---|---|---|---|
+| Edge hit ratio | 20.3% | 35.4% | 42.7% | 47.5% | 47.5% |
+| Removals caused by expiry | 100% | 100% | 100% | 1% | 0% |
+
+Short TTLs keep content fresh at the cost of hit ratio. Past about 20 seconds the TTL stops mattering at this cache size: a full cache pushes items out before they get old enough to expire.
+
+### Routing when a node fails
+
+| One of 8 nodes removed | Objects that move to another node |
+|---|---|
+| Consistent hashing, 150 virtual nodes | **12.8%** |
+| Modulo hashing (`hash % nodes`) | 87.9% |
+| Ideal (only the failed node's share) | 12.5% |
+
+With modulo hashing, losing one node reshuffles almost every object and empties nearly every cache at once. Virtual nodes also even out load: the busiest node carries 1.98x the average load with 1 virtual node per server, and 1.07x with 150.
+
+### What these numbers are not
+
+- **Not production hit ratios.** Real CDNs often serve 90% or more of static traffic from the edge, with much larger caches. Here the cache size is chosen to make the policies easy to compare.
+- **No latency figures.** Hit and miss latency are fixed inputs (1 ms and 100 ms), so average latency only restates the hit ratio.
+- **Simulator speed** (about 200,000 requests per second on one core) measures this Python code, not a CDN.
+
+## Quick start
+
 ```bash
-# Clone repository
-git clone https://github.com/yourusername/edge-cache-sim.git
-cd edge-cache-sim
-
-# Start interactive dashboard
-docker-compose up simulator
-
-# Access dashboard at http://localhost:8501
-```
-
-### Option 2: Local Installation
-```bash
-# Install dependencies
 pip install -r requirements.txt
 
-# Run a simple simulation
+# One simulation (defaults: 8 nodes, 100 objects per node, 1,000-object catalog)
 python cli.py run --policy LRU --nodes 8 --cache-size 100 --requests 50000
 
-# Launch interactive dashboard
+# Sweep one parameter: cache_size, nodes, skew or policy
+python cli.py sweep --param cache_size --values 10,50,100,500 --policy LRU
+python cli.py sweep --param skew --values 0.6,0.9,1.2
+
+# Compare policies across request counts and node counts
+python cli.py benchmark --requests 1000 10000 100000 --nodes 2 4 8
+
+# Reproduce the Results section
+python benchmarks/run_benchmarks.py
+
+# Dashboard
 streamlit run streamlit_app.py
 ```
 
-### Option 3: Development Environment
-```bash
-# Start Jupyter development environment
-docker-compose --profile dev up dev
+With Docker: `docker-compose up simulator`, then open http://localhost:8501. See [docs/docker_deployment.md](docs/docker_deployment.md).
 
-# Access Jupyter at http://localhost:8888
-```
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     CDN SIMULATOR SYSTEM                     │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌──────────────┐      ┌──────────────┐                    │
-│  │ Trace Gen    │─────▶│ Simulator    │                    │
-│  │ (Zipf/Burst) │      │ Orchestrator │                    │
-│  └──────────────┘      └──────┬───────┘                    │
-│                               │                             │
-│                   ┌───────────┴───────────┐                │
-│                   │                       │                 │
-│            ┌──────▼──────┐         ┌─────▼──────┐         │
-│            │ Edge Node 0 │   ...   │ Edge Node N│         │
-│            │ [LRU Cache] │         │ [LFU Cache]│         │
-│            └──────┬──────┘         └─────┬──────┘         │
-│                   │                      │                 │
-│            ┌──────▼──────────────────────▼──────┐         │
-│            │      Metrics Aggregator            │         │
-│            │  • Hit Ratio  • Bandwidth Saved    │         │
-│            │  • Latency    • Cache Occupancy    │         │
-│            └──────┬─────────────────────────────┘         │
-│                   │                                        │
-│         ┌─────────┴─────────┐                             │
-│         │                   │                              │
-│   ┌─────▼──────┐    ┌──────▼────────┐                    │
-│   │ Streamlit  │    │ Jupyter       │                     │
-│   │ Dashboard  │    │ Experiments   │                     │
-│   └────────────┘    └───────────────┘                     │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## 📖 Usage Examples
-
-### Command Line Interface
-
-```bash
-# Run single experiment
-python cli.py run --policy LRU --nodes 8 --cache-size 100 --requests 50000
-
-# Run parameter sweep
-python cli.py sweep --param cache_size --values 10,50,100,500 --policy LRU
-
-# Run performance benchmarks
-python cli.py benchmark --requests 1000,10000,100000 --nodes 2,4,8,16
-
-# Run with HTTP server
-python cli.py run-http --origin http://localhost:8080 --requests 10000
-
-# Generate analysis report
-python cli.py report --experiment-dir results/csv/ --output report.pdf
-```
-
-### Programmatic Usage
+## Programmatic use
 
 ```python
 from src.simulator import CDNSimulator, SimulationConfig
 from src.trace_generator import TraceGenerator
-from src.metrics import MetricsAnalyzer
-from src.visualizer import CDNVisualizer
 
-# Generate realistic trace
-generator = TraceGenerator(seed=42)
-trace = generator.generate_zipf_trace(
-    num_requests=100000,
-    catalog_size=10000,
-    skew=0.9  # Typical web traffic skew
+trace = TraceGenerator(seed=42).generate_zipf_trace(
+    num_requests=100_000, catalog_size=10_000, skew=0.9
 )
+result = CDNSimulator(SimulationConfig(num_nodes=8, cache_capacity=100, policy="LFU")).run(trace)
 
-# Configure simulation
-config = SimulationConfig(
-    num_nodes=16,
-    cache_capacity=500,
-    policy='LRU',
-    enable_prefetch=True,
-    partition_strategy='dynamic'
-)
-
-# Run simulation
-simulator = CDNSimulator(config)
-result = simulator.run(trace)
-
-# Analyze results
-analyzer = MetricsAnalyzer()
-analysis = analyzer.analyze_result(result)
-
-print(f"Hit Ratio: {result.aggregate_metrics['avg_hit_ratio']:.2%}")
-print(f"Bandwidth Saved: {result.aggregate_metrics['bandwidth_saved_pct']:.1f}%")
-print(f"Average Latency: {result.aggregate_metrics['avg_latency_ms']:.1f}ms")
-
-# Generate visualizations
-visualizer = CDNVisualizer()
-fig = visualizer.plot_hit_ratio_vs_cache_size([result])
-fig.savefig('results/plots/hit_ratio_analysis.png')
+print(f"Hit ratio: {result.aggregate_metrics['avg_hit_ratio']:.2%}")
+print(f"Bytes served from edge: {result.aggregate_metrics['bandwidth_saved_pct']:.1f}%")
 ```
 
-### Interactive Dashboard
+Caches run on the trace's simulated clock: each node passes the request's timestamp to `get` and `put`, so a TTL means simulated seconds, not wall-clock seconds.
+
+## Architecture
+
+```
+Trace generator (Zipf / bursty)
+        |
+        v
+Simulator --consistent hash--> Edge node 0 ... Edge node N
+                                (LRU / LFU / TTL cache each)
+        |
+        v
+Metrics: hit ratio, bytes from edge, per-node load
+        |
+        v
+CLI / Streamlit dashboard / notebooks
+```
+
+## Testing
 
 ```bash
-# Start Streamlit dashboard
-streamlit run streamlit_app.py
-
-# Navigate to http://localhost:8501
-# Features:
-# - Real-time simulation controls
-# - Interactive parameter sliders
-# - Live-updating charts
-# - Policy comparison tools
-# - Export capabilities
+python -m pytest tests            # 88 tests
+python -m pytest tests --cov=src  # with coverage
 ```
 
-## 🧪 Experiments & Analysis
+Coverage is 80% for the core engine (cache policies, routing, nodes, simulator, trace generation and metrics). The plotting code in `visualizer.py` has no tests, which brings the repository-wide figure down to 54%.
 
-The project includes comprehensive experimental notebooks:
+| Module | Coverage |
+|---|---|
+| `cache/ttl.py` | 97% |
+| `node.py` | 96% |
+| `trace_generator.py` | 96% |
+| `cache/lru.py` | 95% |
+| `simulator.py` | 92% |
+| `cache/lfu.py` | 82% |
+| `utils/hashing.py` | 59% |
+| `metrics.py` | 24% |
 
-### 📊 Analysis Notebooks
-- **`01_cache_size_sweep.ipynb`** - Cache capacity scaling analysis
-- **`02_zipf_skew_analysis.ipynb`** - Policy performance under different popularity distributions
-- **`03_policy_comparison.ipynb`** - Head-to-head policy comparison
-- **`04_prefetch_evaluation.ipynb`** - Prefetching effectiveness analysis
-- **`05_partition_strategies.ipynb`** - Cache partitioning strategies
-- **`06_http_simulation.ipynb`** - Real HTTP server integration
+## Project structure
 
-### 🔬 Experimental Design
-```python
-# Example: Cache Size Sweep Experiment
-cache_sizes = [10, 25, 50, 100, 200, 500, 1000]
-policies = ['LRU', 'LFU', 'TTL']
-
-results = []
-for policy in policies:
-    for cache_size in cache_sizes:
-        config = SimulationConfig(
-            num_nodes=8,
-            cache_capacity=cache_size,
-            policy=policy
-        )
-        result = simulator.run(trace)
-        results.append(result)
-
-# Analyze results
-visualizer.plot_hit_ratio_vs_cache_size(results)
+```
+src/
+  cache/             LRU, LFU and TTL policies on a shared base class
+  simulator.py       Orchestrates nodes and routing
+  node.py            Edge node: one cache plus metrics
+  trace_generator.py Zipf and bursty workloads
+  utils/hashing.py   Consistent hash ring with virtual nodes
+  metrics.py         Analysis helpers
+  visualizer.py      Plots
+benchmarks/          Script that reproduces the Results section
+tests/               pytest suite
+notebooks/           Cache size sweep notebook
+cli.py               Command-line interface
+streamlit_app.py     Dashboard
 ```
 
-## 🐳 Docker Deployment
+## Known limitations
 
-### Production Deployment
-```bash
-# Build and run production dashboard
-docker-compose up simulator
+- Workloads are synthetic. Popularity is fixed for the whole trace, so results favour LFU more than real traffic would.
+- `enable_prefetch` and `partition_strategy` are placeholders in the config: `src/prefetch` and `src/partition` define interfaces that the simulator does not use yet.
+- Caches count objects, not bytes, so object size does not affect eviction.
+- The TTL is one value for the whole cache, not per object as with HTTP `Cache-Control` headers.
 
-# Access at http://localhost:8501
-```
+## Changelog
 
-### Development Environment
-```bash
-# Start Jupyter development environment
-docker-compose --profile dev up dev
-
-# Access Jupyter at http://localhost:8888
-```
-
-### HTTP Simulation
-```bash
-# Run with mock origin server
-docker-compose --profile http up simulator origin-server
-
-# Test HTTP integration
-curl http://localhost:8080/objects/test_object
-```
-
-### Testing & Benchmarking
-```bash
-# Run test suite
-docker-compose --profile test up test
-
-# Run benchmarks
-docker-compose --profile benchmark up benchmark
-```
-
-## 🧪 Testing
-
-### Run Test Suite
-```bash
-# Run all tests with coverage
-python test_runner.py
-
-# Run fast tests (no coverage)
-python test_runner.py fast
-
-# Run specific test file
-python test_runner.py specific test_cache_lru.py
-
-# Run tests in Docker
-docker-compose --profile test up test
-```
-
-### Test Coverage
-- **Cache Policies**: LRU, LFU, TTL implementations
-- **Trace Generation**: Zipf, Poisson, mixed distributions
-- **Simulation Engine**: Multi-node orchestration
-- **Metrics Analysis**: Statistical validation
-- **Integration Tests**: End-to-end workflows
-
-## 📊 Performance Benchmarks
-
-### Typical Performance (on modern hardware)
-- **10K requests**: ~0.1 seconds
-- **100K requests**: ~1.0 seconds  
-- **1M requests**: ~10 seconds
-- **Memory usage**: ~100MB for 1M requests
-- **Scalability**: Linear scaling with request count
-
-### Benchmark Results
-```bash
-# Run comprehensive benchmarks
-python cli.py benchmark --requests 1000,10000,100000 --nodes 2,4,8,16
-
-# Example output:
-# LRU  | 100,000 req | 16 nodes | 2.34s | 42,735 req/s | 78.5% hit ratio
-# LFU  | 100,000 req | 16 nodes | 2.67s | 37,453 req/s | 72.1% hit ratio
-# TTL  | 100,000 req | 16 nodes | 2.45s | 40,816 req/s | 75.3% hit ratio
-```
-
-## 🔧 Development
-
-### Project Structure
-```
-edge-cache-sim/
-├── src/                    # Core simulation engine
-│   ├── cache/             # Cache policy implementations
-│   ├── simulator.py       # Main orchestrator
-│   ├── node.py           # Edge node implementation
-│   ├── trace_generator.py # Workload generation
-│   ├── metrics.py        # Analytics and reporting
-│   └── visualizer.py     # Plotting utilities
-├── tests/                 # Comprehensive test suite
-├── notebooks/             # Experimental analysis
-├── streamlit_app.py      # Interactive dashboard
-├── cli.py                # Command-line interface
-├── Dockerfile            # Multi-stage container build
-├── docker-compose.yml    # Service orchestration
-└── Makefile              # Development automation
-```
-
-### Development Workflow
-```bash
-# Setup development environment
-make dev-setup
-
-# Run tests
-make test
-
-# Format code
-make format
-
-# Run linting
-make lint
-
-# Quick validation
-make quick-test
-```
-
-### Code Quality
-- **Type Safety**: Full type hints with mypy validation
-- **Code Formatting**: Black formatter with consistent style
-- **Linting**: Pylint for code quality analysis
-- **Testing**: >90% code coverage with pytest
-- **Documentation**: Comprehensive docstrings and examples
-
-## 📈 Key Research Findings
-
-### Cache Policy Performance
-- **LRU**: Best for temporal locality workloads (typical web traffic)
-- **LFU**: Optimal for static popularity distributions
-- **TTL**: Consistent performance with content freshness requirements
-
-### Scaling Characteristics
-- **Hit Ratio**: Diminishing returns start around 200-500 cache objects
-- **Load Balancing**: Consistent hashing provides excellent distribution
-- **Multi-Node**: Linear scaling with node count for most workloads
-
-### Workload Insights
-- **Zipf Skew**: Higher skew (α > 1.0) benefits all policies
-- **Bursty Traffic**: Poisson arrivals create realistic flash crowd patterns
-- **Object Popularity**: Top 10% of objects typically receive 90% of requests
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Setup
-```bash
-# Fork and clone repository
-git clone https://github.com/yourusername/edge-cache-sim.git
-cd edge-cache-sim
-
-# Install development dependencies
-make dev-setup
-
-# Run tests
-make test
-
-# Create feature branch
-git checkout -b feature/amazing-feature
-
-# Make changes and test
-make quick-test
-
-# Submit pull request
-```
-
-### Contribution Areas
-- **New Cache Policies**: Implement additional eviction strategies
-- **Advanced Prefetching**: ML-based prediction algorithms
-- **Real Workloads**: Integration with actual CDN traces
-- **Performance Optimization**: Faster simulation algorithms
-- **Visualization**: New chart types and interactive features
-
-## 📚 Documentation
-
-- **[API Reference](docs/api_reference.md)** - Complete API documentation
-- **[Architecture Guide](docs/architecture.md)** - System design overview
-- **[Docker Deployment](docs/docker_deployment.md)** - Container deployment guide
-- **[Experiment Methodology](docs/experiments.md)** - Research methodology
-- **[Algorithm Details](docs/algorithms.md)** - Implementation details
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **Research Community**: Built on decades of caching research
-- **Open Source**: Leverages excellent Python ecosystem
-- **CDN Providers**: Inspired by real-world CDN architectures
-- **Contributors**: Thanks to all who have contributed
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/edge-cache-sim/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/edge-cache-sim/discussions)
-- **Documentation**: [Project Wiki](https://github.com/yourusername/edge-cache-sim/wiki)
-
----
-
-**Built with ❤️ for the distributed systems community**
+- **TTL fixed.** It used to check expiry against the wall clock, so in a run lasting about a second nothing ever expired and it returned exactly the same results as LRU. Reads also reset an item's timer, so popular content never expired. TTL now uses simulated time, counts from when an item was cached, and finds expired items in O(1) amortised time instead of scanning the cache.
+- **Reproducible traces.** Generators seeded the global NumPy random state, so two generators with the same seed could produce different traces. Each generator now has its own random stream.
+- **Fixed** a crash on zero-request traces, a wrong request count in the run summary, and `cli.py sweep`, which crashed and ignored skew values.

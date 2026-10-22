@@ -541,7 +541,7 @@ class TestSimulationResult:
         assert "Nodes: 4" in summary
         assert "Policy: LRU" in summary
         assert "Requests: 1,000" in summary
-        assert "Hit Ratio: 75%" in summary
+        assert "Hit Ratio: 75.00%" in summary
         assert "Bandwidth Saved: 60.0%" in summary
         assert "Avg Latency: 25.5ms" in summary
         assert "Execution Time: 1.50s" in summary
@@ -618,3 +618,20 @@ class TestIntegration:
         # Hit ratios should be different (policies behave differently)
         hit_ratios = [r.aggregate_metrics["avg_hit_ratio"] for r in results]
         assert len(set(hit_ratios)) > 1  # At least some variation
+
+
+class TestTTLInSimulation:
+    """Regression test: TTL used to check the wall clock, so nothing expired and it matched LRU exactly."""
+
+    def test_short_ttl_expires_during_simulation(self):
+        trace = TraceGenerator(seed=7).generate_zipf_trace(
+            num_requests=5_000, catalog_size=500, skew=0.9, duration_seconds=500.0
+        )
+        lru = CDNSimulator(SimulationConfig(num_nodes=2, cache_capacity=50, policy="LRU")).run(trace)
+        ttl = CDNSimulator(
+            SimulationConfig(num_nodes=2, cache_capacity=50, policy="TTL", ttl_seconds=5.0)
+        ).run(trace)
+
+        expired = sum(n.get("expired_count", 0) for n in ttl.node_metrics)
+        assert expired > 0
+        assert ttl.aggregate_metrics["avg_hit_ratio"] != lru.aggregate_metrics["avg_hit_ratio"]

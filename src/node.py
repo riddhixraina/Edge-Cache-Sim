@@ -109,7 +109,7 @@ class EdgeNode:
         self.total_requests += 1
         
         # Check cache
-        cache_entry = self.cache.get(object_id)
+        cache_entry = self.cache.get(object_id, now=timestamp)
         
         if cache_entry is not None:
             # Cache hit
@@ -122,7 +122,7 @@ class EdgeNode:
             latency_ms = self.origin_latency_ms
             
             # Store in cache
-            self.cache.put(object_id, f"data_{object_id}", object_size)
+            self.cache.put(object_id, f"data_{object_id}", object_size, now=timestamp)
             
             self.total_bytes_served += object_size
             self.total_bytes_from_origin += object_size
