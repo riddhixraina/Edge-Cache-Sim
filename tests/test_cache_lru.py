@@ -551,3 +551,54 @@ class TestCacheEdgeCases:
         
         entry = cache.get("key_🚀")
         assert entry.value == "value2"
+
+
+class TestTTLSimulatedTime:
+    """TTL must follow the simulated clock and expire by age, not by idleness."""
+
+    def test_expires_on_simulated_time(self):
+        cache = TTLCache(capacity=3, ttl_seconds=10.0)
+        cache.put("a", "v", 100, now=0.0)
+
+        assert cache.get("a", now=9.9) is not None
+        assert cache.get("a", now=10.0) is None
+        assert cache.get_metrics()["expired_count"] == 1
+
+    def test_reads_do_not_extend_life(self):
+        cache = TTLCache(capacity=3, ttl_seconds=10.0)
+        cache.put("hot", "v", 100, now=0.0)
+
+        for t in (2.0, 4.0, 6.0, 8.0):
+            assert cache.get("hot", now=t) is not None
+        # Read constantly, but it was cached 11 s ago, so it must expire
+        assert cache.get("hot", now=11.0) is None
+
+    def test_refetch_gets_fresh_ttl(self):
+        cache = TTLCache(capacity=3, ttl_seconds=10.0)
+        cache.put("a", "v1", 100, now=0.0)
+        cache.put("a", "v2", 100, now=8.0)
+
+        entry = cache.get("a", now=15.0)
+        assert entry is not None and entry.value == "v2"
+        assert len(cache) == 1
+
+    def test_put_drops_expired_before_evicting(self):
+        cache = TTLCache(capacity=2, ttl_seconds=5.0)
+        cache.put("old1", "v", 100, now=0.0)
+        cache.put("old2", "v", 100, now=1.0)
+        cache.put("new", "v", 100, now=20.0)
+
+        assert len(cache) == 1
+        assert cache.evictions == 0
+        assert cache.get_metrics()["expired_count"] == 2
+
+    def test_full_cache_evicts_oldest(self):
+        cache = TTLCache(capacity=2, ttl_seconds=100.0)
+        cache.put("a", "v", 100, now=0.0)
+        cache.put("b", "v", 100, now=1.0)
+        cache.get("a", now=2.0)  # a read does not save "a" from eviction
+        cache.put("c", "v", 100, now=3.0)
+
+        assert cache.get("a", now=4.0) is None
+        assert cache.get("b", now=4.0) is not None
+        assert cache.evictions == 1

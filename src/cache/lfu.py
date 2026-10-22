@@ -33,7 +33,7 @@ class LFUCache(CachePolicy):
         self._key_to_freq: Dict[str, int] = {}
         self._counter = 0  # For tie-breaking in heap
     
-    def get(self, key: str) -> Optional[CacheEntry]:
+    def get(self, key: str, now: Optional[float] = None) -> Optional[CacheEntry]:
         """
         Retrieve an item from the cache.
         
@@ -48,7 +48,7 @@ class LFUCache(CachePolicy):
         if key in self._cache:
             entry = self._cache[key]
             entry.access_count += 1
-            entry.timestamp = time.time()
+            entry.timestamp = now if now is not None else time.time()
             
             # Update frequency
             old_freq = self._key_to_freq[key]
@@ -65,7 +65,7 @@ class LFUCache(CachePolicy):
             self.misses += 1
             return None
     
-    def put(self, key: str, value: Any, size: int) -> None:
+    def put(self, key: str, value: Any, size: int, now: Optional[float] = None) -> None:
         """
         Store an item in the cache.
         
@@ -90,7 +90,7 @@ class LFUCache(CachePolicy):
             key=key,
             value=value,
             size=size,
-            timestamp=time.time(),
+            timestamp=now if now is not None else time.time(),
             access_count=1
         )
         self._cache[key] = entry

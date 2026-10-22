@@ -9,7 +9,6 @@ import numpy as np
 from scipy import stats
 from typing import List, Tuple, Dict, Any, Optional
 from dataclasses import dataclass
-import random
 import time
 
 
@@ -54,9 +53,10 @@ class TraceGenerator:
             seed: Random seed for reproducible traces
         """
         self.seed = seed
-        if seed is not None:
-            np.random.seed(seed)
-            random.seed(seed)
+        # Each generator owns its random stream, so two generators with the same
+        # seed produce the same trace even when their calls interleave.
+        # RandomState gives the same sequence as the old global np.random.seed().
+        self.rng = np.random.RandomState(seed)
     
     def generate_zipf_trace(
         self,
@@ -98,7 +98,7 @@ class TraceGenerator:
         probabilities = probabilities / np.sum(probabilities)  # Normalize
         
         # Sample requests according to Zipf distribution
-        request_indices = np.random.choice(
+        request_indices = self.rng.choice(
             catalog_size, 
             size=num_requests, 
             p=probabilities
@@ -111,7 +111,7 @@ class TraceGenerator:
         # Most objects are small, few are very large
         log_mean = np.log(min_object_size)
         log_std = 0.5
-        sizes = np.random.lognormal(log_mean, log_std, catalog_size)
+        sizes = self.rng.lognormal(log_mean, log_std, catalog_size)
         sizes = np.clip(sizes, min_object_size, max_object_size).astype(int)
         
         object_sizes = {obj_id: int(sizes[i]) for i, obj_id in enumerate(object_ids)}
@@ -122,7 +122,7 @@ class TraceGenerator:
             avg_request_rate = 100  # requests per second
             duration_seconds = num_requests / avg_request_rate
         
-        timestamps = np.sort(np.random.uniform(0, duration_seconds, num_requests))
+        timestamps = np.sort(self.rng.uniform(0, duration_seconds, num_requests))
         
         metadata = {
             "generator": "zipf",
@@ -130,7 +130,7 @@ class TraceGenerator:
             "catalog_size": catalog_size,
             "skew": skew,
             "duration_seconds": duration_seconds,
-            "avg_request_rate": num_requests / duration_seconds,
+            "avg_request_rate": num_requests / duration_seconds if duration_seconds > 0 else 0.0,
             "unique_objects_requested": len(set(requests)),
             "popularity_distribution": "zipf",
         }
@@ -178,7 +178,7 @@ class TraceGenerator:
         # Generate object sizes (log-normal distribution)
         log_mean = np.log(min_object_size)
         log_std = 0.5
-        sizes = np.random.lognormal(log_mean, log_std, catalog_size)
+        sizes = self.rng.lognormal(log_mean, log_std, catalog_size)
         sizes = np.clip(sizes, min_object_size, max_object_size).astype(int)
         object_sizes = {obj_id: int(sizes[i]) for i, obj_id in enumerate(object_ids)}
         
@@ -188,18 +188,18 @@ class TraceGenerator:
         
         while len(timestamps) < num_requests:
             # Decide if we're in a burst or normal period
-            if np.random.random() < burst_probability:
+            if self.rng.random() < burst_probability:
                 # Burst period
                 rate = burst_rate
                 duration = burst_duration
             else:
                 # Normal period
                 rate = base_rate
-                duration = np.random.exponential(1.0 / burst_probability)  # Average time between bursts
+                duration = self.rng.exponential(1.0 / burst_probability)  # Average time between bursts
             
             # Generate Poisson arrivals for this period
-            num_arrivals = np.random.poisson(rate * duration)
-            arrivals = np.random.uniform(current_time, current_time + duration, num_arrivals)
+            num_arrivals = self.rng.poisson(rate * duration)
+            arrivals = self.rng.uniform(current_time, current_time + duration, num_arrivals)
             timestamps.extend(arrivals)
             
             current_time += duration
@@ -208,7 +208,7 @@ class TraceGenerator:
         timestamps = sorted(timestamps)[:num_requests]
         
         # Generate requests (uniform distribution over catalog)
-        requests = np.random.choice(object_ids, size=num_requests).tolist()
+        requests = self.rng.choice(object_ids, size=num_requests).tolist()
         
         duration_seconds = max(timestamps) if timestamps else 0.0
         

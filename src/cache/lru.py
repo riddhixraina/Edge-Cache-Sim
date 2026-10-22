@@ -30,7 +30,7 @@ class LRUCache(CachePolicy):
         super().__init__(capacity)
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
     
-    def get(self, key: str) -> Optional[CacheEntry]:
+    def get(self, key: str, now: Optional[float] = None) -> Optional[CacheEntry]:
         """
         Retrieve an item from the cache.
         
@@ -45,7 +45,7 @@ class LRUCache(CachePolicy):
         if key in self._cache:
             # Move to end (most recently used)
             entry = self._cache.pop(key)
-            entry.timestamp = time.time()
+            entry.timestamp = now if now is not None else time.time()
             entry.access_count += 1
             self._cache[key] = entry
             self.hits += 1
@@ -54,7 +54,7 @@ class LRUCache(CachePolicy):
             self.misses += 1
             return None
     
-    def put(self, key: str, value: Any, size: int) -> None:
+    def put(self, key: str, value: Any, size: int, now: Optional[float] = None) -> None:
         """
         Store an item in the cache.
         
@@ -79,7 +79,7 @@ class LRUCache(CachePolicy):
             key=key,
             value=value,
             size=size,
-            timestamp=time.time(),
+            timestamp=now if now is not None else time.time(),
             access_count=1
         )
         self._cache[key] = entry

@@ -52,9 +52,12 @@ class CachePolicy(ABC):
         self.evictions = 0
         
     @abstractmethod
-    def get(self, key: str) -> Optional[CacheEntry]:
+    def get(self, key: str, now: Optional[float] = None) -> Optional[CacheEntry]:
         """
         Retrieve an item from the cache.
+
+        ``now`` is the current time in seconds. The simulator passes the request's
+        simulated timestamp, and direct callers can omit it to use the wall clock.
         
         Args:
             key: The key to look up
@@ -65,9 +68,11 @@ class CachePolicy(ABC):
         pass
     
     @abstractmethod
-    def put(self, key: str, value: Any, size: int) -> None:
+    def put(self, key: str, value: Any, size: int, now: Optional[float] = None) -> None:
         """
         Store an item in the cache.
+
+        ``now`` is the current time in seconds (simulated or wall clock, see ``get``).
         
         Args:
             key: The key to store
